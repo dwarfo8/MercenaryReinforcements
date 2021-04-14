@@ -1,0 +1,865 @@
+﻿behaviour("MercenaryReinforcements")
+
+local mercenaryDictBlue = {}
+local mercenaryDictRed = {}
+
+local mercenarySpawnQueueBlue = {}
+local mercenarySpawnQueueRed = {}
+
+local cleanupTime = 4
+local mercenaryCleanQueueBlue = {}
+local mercenaryCleanQueueRed = {}
+
+local mercenarySkinBlue = nil
+local mercenarySkinRed = nil
+local canvasMercenaryCount = nil
+local cmcGO = nil
+local cmcText = nil
+
+local canvasReinforcementAnnouncement = nil
+local craGO = nil
+local craText = nil
+local reinforcementAnnouncementTime = 10
+
+local UIWaitTime = 0.1
+
+local mercenaryIdlePosDict = {}
+local idleMercenaryTime = 5
+local mercenaryIdleMinDist = 2
+
+local teamBlueKillCounter = 0
+local teamRedKillCounter = 0
+
+local airDropHeight = 150
+
+local numMercenariesBlue = 0
+local numMercenariesRed = 0
+
+local isUiToggleEnable = true
+
+local frontlineDictBlue = {}
+local frontlineDictRed = {}
+
+local aggressiveCaptureTime = 5
+
+-- prevents error message with ActorManager.CreateAIActor when run too fast
+local mercSpawnBufferTime = 0.02
+
+-- percentages
+local percentTeamKillRequirement = 100
+local teamKillRequirementBlue = 0
+local teamKillRequirementRed = 0
+
+local percentTeamKillReward = 40
+local teamKillReward = 0
+
+local percentMercenaryMaxBlue = 100
+local mercenaryMaxBlue = 0
+
+local percentMercenaryMaxRed = 100
+local mercenaryMaxRed = 0
+
+local percentLosingTeamRollback = 80
+local losingTeamRollbackBlue = 0
+local losingTeamRollbackRed = 0
+
+local percentEnemyHandicapRequirement = 10
+
+-- boolean options
+local isDisableMercenaryCounterUI = false
+local isDisableAggressiveMercenarySquads = false
+local isEnableDebugMessage = false
+local isEnableShowMercenaryCountUI = false
+local isDisableReinforcementAnnouncement = false
+local isOutOfBoundMerc = false
+
+SpawnMethod = {
+	["DISTRIBUTED"] = 1,
+	["GROUP"] = 2,
+}
+local spawnMethod = SpawnMethod.DISTRIBUTED
+
+SquadFormation = {
+	["VEE"] = 1,
+	["DIAMOND"] = 2,
+}
+local squadFormation = SquadFormation.VEE
+
+List = {}
+function List.new()
+	return {first = 0, last = -1}
+end
+
+function List.pushleft(list, value)
+	local first = list.first - 1
+	list.first = first
+	list[first] = value
+end
+
+function List.pushright(list, value)
+	local last = list.last + 1
+	list.last = last
+	list[last] = value
+end
+
+function List.popleft(list)
+	local first = list.first
+	if first > list.last then return nil end
+	local value = list[first]
+	list[first] = nil        -- to allow garbage collection
+	list.first = first + 1
+	return value
+end
+
+function List.popright(list)
+	local last = list.last
+	if list.first > last then return nil end
+	local value = list[last]
+	list[last] = nil         -- to allow garbage collection
+	list.last = last - 1
+	return value
+end
+
+function MercenaryReinforcements:CreateMercenaryBlue()
+	-- create and name new mercenary
+	local newMercenary = ActorManager.CreateAIActor(Team.Blue)
+	newMercenary.name = "[Merc] " .. newMercenary.name
+
+	-- set skin
+	local characterModelMesh = mercenarySkinBlue.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMesh
+	local characterModelMaterial = mercenarySkinBlue.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMaterials
+	local characterMeshSkin = MeshSkin(characterModelMesh, characterModelMaterial, -1)
+
+	-- assign mercenary skin
+	local curMercenarySkin = ActorSkin()
+	curMercenarySkin.characterSkin = characterMeshSkin
+	newMercenary.SetSkin(curMercenarySkin)
+
+	-- update information
+	mercenaryDictBlue[newMercenary] = false
+	List.pushright(mercenarySpawnQueueBlue, newMercenary)
+	newMercenary.Deactivate()
+end
+
+function MercenaryReinforcements:CreateMercenaryRed()
+	-- create and name new mercenary
+	local newMercenary = ActorManager.CreateAIActor(Team.Red)
+	newMercenary.name = "[Merc] " .. newMercenary.name
+
+	-- set skin
+	local characterModelMesh = mercenarySkinRed.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMesh
+	local characterModelMaterial = mercenarySkinRed.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMaterials
+	local characterMeshSkin = MeshSkin(characterModelMesh, characterModelMaterial, -1)
+
+	-- assign mercenary skin
+	local curMercenarySkin = ActorSkin()
+	curMercenarySkin.characterSkin = characterMeshSkin
+	newMercenary.SetSkin(curMercenarySkin)
+
+	-- update information
+	mercenaryDictRed[newMercenary] = false
+	List.pushright(mercenarySpawnQueueRed, newMercenary)
+	newMercenary.Deactivate()
+end
+
+function MercenaryReinforcements:EnableAggressiveSquad(squad, allyTeam, enemyTeam)
+	if not (isDisableAggressiveMercenarySquads) then
+		local isNotAttackingSquad = (squad.leader ~= Player.actor) and (squad.order ~= nil) and (squad.order.type ~= OrderType.Attack)
+		local isNilOrderSquad = (squad.leader ~= Player.actor) and (squad.order == nil)
+		if (isNotAttackingSquad or isNilOrderSquad) then
+			-- find closest frontline point
+			local frontlineDict = {}
+			if (allyTeam == Team.Blue) then
+				frontlineDict = frontlineDictBlue
+			else
+				frontlineDict = frontlineDictRed
+			end
+			local shortestDist = 1000000
+			local closestFrontlinePoint = ActorManager.RandomFrontlineSpawnPointForTeam(allyTeam)
+			for frontline,value in pairs(frontlineDict) do
+				if (value == true) then
+					local distFromSquad = Vector3.Distance(squad.leader.position, frontline.transform.position)
+					if (distFromSquad < shortestDist) then
+						shortestDist = distFromSquad
+						closestFrontlinePoint = frontline
+					end
+				end
+			end
+
+			-- check which are non-ally capturepoints and is not disabled
+			local potentialAttackPoints = closestFrontlinePoint.neighoursOutgoing
+			local attackPointList = {}
+			for i,potAttackPoint in ipairs(potentialAttackPoints) do
+				if ((potAttackPoint.owner ~= allyTeam) and (potAttackPoint.gameObject.activeInHierarchy == true)) then
+					table.insert(attackPointList, potAttackPoint)
+				end
+			end
+			-- exit if list is empty
+			if (#attackPointList == 0) then
+				return
+			end
+			-- choose random attack point
+			local randAttackIndex = math.random(1,#attackPointList)
+			local attackOrder = Order.Create(OrderType.Attack, randAllyFrontline, attackPointList[randAttackIndex])
+			squad.AssignOrder(attackOrder)
+		end
+	end
+end
+
+function MercenaryReinforcements:CheckKillProgress(deadActor, killer)
+	-- exit if actors do not exist
+	if ((deadActor == nil) or (killer == nil)) then
+		return
+	end
+	-- ignore team kills
+	if (deadActor.team == killer.team) then
+		return
+	end
+
+	-- initialize variables
+	local teamKillCounter = 0
+	local curTeamKillRequirement = 0
+	if (killer.team == Team.Blue) then
+		teamKillCounter = teamBlueKillCounter
+		curTeamKillRequirement = teamKillRequirementBlue
+	else
+		teamKillCounter = teamRedKillCounter
+		curTeamKillRequirement = teamKillRequirementRed
+	end
+
+	-- count kill
+	teamKillCounter = teamKillCounter - 1
+	
+	
+	-- check if count meets kill requirement and squad leader is not a mercenary
+	if (teamKillCounter <= 0) then
+		-- reset teamKillCounter
+		teamKillCounter = curTeamKillRequirement
+
+		-- rollback losing team if less than rollback value
+		if (killer.team == Team.Blue) then
+			if (teamRedKillCounter < losingTeamRollbackRed) then
+				teamRedKillCounter = losingTeamRollbackRed
+			end
+		else
+			if (teamBlueKillCounter < losingTeamRollbackBlue) then
+				teamBlueKillCounter = losingTeamRollbackBlue
+			end
+		end
+
+		-- display message
+		if not (isDisableReinforcementAnnouncement) then
+			if (killer.team == Team.Blue) then
+				self.script.StartCoroutine("ShowReinforcementAnnouncementBlue")
+			else
+				self.script.StartCoroutine("ShowReinforcementAnnouncementRed")
+			end
+		end
+
+		-- spawn mercenaries
+		if (killer.team == Team.Blue) then
+			self.script.StartCoroutine("SpawnMercenaryBlue")
+		else
+			self.script.StartCoroutine("SpawnMercenaryRed")
+		end
+	end
+
+	-- copy back team kill count
+	if (killer.team == Team.Blue) then
+		teamBlueKillCounter = teamKillCounter
+	else
+		teamRedKillCounter = teamKillCounter
+	end
+
+	-- update UI info
+	self:UpdateText()
+end
+
+function MercenaryReinforcements:ShowReinforcementAnnouncementBlue()
+	if (isUiToggleEnable) then
+		craGO.SetActive(true)
+		craText.text = "<color=blue>EAGLE</color> REINFORCEMENTS HAVE ARRIVED"
+		coroutine.yield(WaitForSeconds(reinforcementAnnouncementTime))
+		craGO.SetActive(false)
+	end
+end
+
+function MercenaryReinforcements:ShowReinforcementAnnouncementRed()
+	if (isUiToggleEnable) then
+		craGO.SetActive(true)
+		craText.text = "<color=red>RAVEN</color> REINFORCEMENTS HAVE ARRIVED"
+		coroutine.yield(WaitForSeconds(reinforcementAnnouncementTime))
+		craGO.SetActive(false)
+	end
+end
+
+function MercenaryReinforcements:SpawnMercenaryBlue()
+	-- get list of squads
+	local allySquads = {}
+	local curSquadIndex = 1
+
+	-- get squad for distributed -- squad looping
+	if (spawnMethod == SpawnMethod.DISTRIBUTED) then
+		allySquads = ActorManager.GetSquadsOnTeam(Team.Blue)
+	-- get random squad for single group
+	elseif (spawnMethod == SpawnMethod.GROUP) then
+		allySquads = ActorManager.GetSquadsOnTeam(Team.Blue)
+		curSquadIndex = math.random(1,#allySquads)
+	end
+
+	-- spawn mercenaries
+	for i=1,teamKillReward,1 do
+		-- exit if mercenary count reach max limit
+		if (numMercenariesBlue >= mercenaryMaxBlue) then
+			break
+		end
+
+		-- find existing deactivated mercenary to spawn if any
+		local existMercenary = List.popleft(mercenarySpawnQueueBlue)
+
+		-- create mercenary if non exists
+		if (existMercenary == nil) then
+			self:CreateMercenaryBlue()
+			existMercenary = List.popleft(mercenarySpawnQueueBlue)
+		end
+
+		-- spawn mercenary
+		if (existMercenary ~= nil) then
+			-- calculate air drop position
+			local airDropPosition = allySquads[curSquadIndex].leader.position
+			airDropPosition.y = airDropPosition.y + airDropHeight
+
+			-- spawn mercenary
+			existMercenary.Activate()
+			existMercenary.SpawnAt(airDropPosition)
+
+			-- add to chosen random squad
+			allySquads[curSquadIndex].AddMember(existMercenary)
+
+			-- update information
+			mercenaryDictBlue[existMercenary] = true
+			mercenaryIdlePosDict[existMercenary] = existMercenary.position
+			numMercenariesBlue = numMercenariesBlue + 1
+
+			-- loop through squads if distributed
+			if (spawnMethod == SpawnMethod.DISTRIBUTED) then
+				curSquadIndex = curSquadIndex + 1
+				if (curSquadIndex > #allySquads) then
+					curSquadIndex = 1
+				end
+			end
+		else
+			break
+		end
+
+		coroutine.yield(WaitForSeconds(mercSpawnBufferTime))
+	end
+
+	-- make squad aggressive for distributed -- squad looping
+	if (spawnMethod == SpawnMethod.DISTRIBUTED) then
+		for _, allySquad in ipairs(allySquads) do
+			self:EnableAggressiveSquad(allySquad, Team.Blue, Team.Red)
+			coroutine.yield()
+		end
+	-- make squad aggressive for single group
+	elseif (spawnMethod == SpawnMethod.GROUP) then
+		self:EnableAggressiveSquad(allySquads[curSquadIndex], Team.Blue, Team.Red)
+	end
+
+	-- set formation
+	if (squadFormation == SquadFormation.VEE) then
+		allySquads[curSquadIndex].SetFormation(FormationType.Vee)
+	else
+		allySquads[curSquadIndex].SetFormation(FormationType.Diamond)
+	end
+
+	self:UpdateText()
+end
+
+function MercenaryReinforcements:SpawnMercenaryRed()
+	-- get list of squads
+	local allySquads = {}
+	local curSquadIndex = 1
+
+	-- get squad for distributed -- squad looping
+	if (spawnMethod == SpawnMethod.DISTRIBUTED) then
+		allySquads = ActorManager.GetSquadsOnTeam(Team.Red)
+	-- get random squad for single group
+	elseif (spawnMethod == SpawnMethod.GROUP) then
+		allySquads = ActorManager.GetSquadsOnTeam(Team.Red)
+		curSquadIndex = math.random(1,#allySquads)
+	end
+
+	-- spawn mercenaries
+	for i=1,teamKillReward,1 do
+		-- exit if mercenary count reach max limit
+		if (numMercenariesRed >= mercenaryMaxRed) then
+			break
+		end
+
+		-- find existing deactivated mercenary to spawn if any
+		local existMercenary = List.popleft(mercenarySpawnQueueRed)
+
+		-- create mercenary if non exists
+		if (existMercenary == nil) then
+			self:CreateMercenaryRed()
+			existMercenary = List.popleft(mercenarySpawnQueueRed)
+		end
+
+		-- spawn mercenary
+		if (existMercenary ~= nil) then
+			-- calculate air drop position
+			local airDropPosition = allySquads[curSquadIndex].leader.position
+			airDropPosition.y = airDropPosition.y + airDropHeight
+
+			-- spawn mercenary
+			existMercenary.Activate()
+			existMercenary.SpawnAt(airDropPosition)
+
+			-- add to chosen random squad
+			allySquads[curSquadIndex].AddMember(existMercenary)
+
+			-- update information
+			mercenaryDictRed[existMercenary] = true
+			mercenaryIdlePosDict[existMercenary] = existMercenary.position
+			numMercenariesRed = numMercenariesRed + 1
+
+			-- loop through squads if distributed
+			if (spawnMethod == SpawnMethod.DISTRIBUTED) then
+				curSquadIndex = curSquadIndex + 1
+				if (curSquadIndex > #allySquads) then
+					curSquadIndex = 1
+				end
+			end
+		else
+			break
+		end
+
+		coroutine.yield(WaitForSeconds(mercSpawnBufferTime))
+	end
+
+	-- make squad aggressive for distributed -- squad looping
+	if (spawnMethod == SpawnMethod.DISTRIBUTED) then
+		for _, allySquad in ipairs(allySquads) do
+			self:EnableAggressiveSquad(allySquad, Team.Red, Team.Blue)
+			coroutine.yield()
+		end
+	-- make squad aggressive for single group
+	elseif (spawnMethod == SpawnMethod.GROUP) then
+		self:EnableAggressiveSquad(allySquads[curSquadIndex], Team.Red, Team.Blue)
+	end
+
+	-- set formation
+	if (squadFormation == SquadFormation.VEE) then
+		allySquads[curSquadIndex].SetFormation(FormationType.Vee)
+	else
+		allySquads[curSquadIndex].SetFormation(FormationType.Diamond)
+	end
+
+	self:UpdateText()
+end
+
+function MercenaryReinforcements:CleanupDeadMercenaryBlue()
+	coroutine.yield(WaitForSeconds(cleanupTime))
+	local curMercenary = List.popleft(mercenaryCleanQueueBlue)
+	List.pushright(mercenarySpawnQueueBlue, curMercenary)
+	curMercenary.Deactivate()
+	numMercenariesBlue = numMercenariesBlue - 1
+	if ((Player.team == Team.Blue)) then
+		self:UpdateText()
+	end
+end
+
+function MercenaryReinforcements:CleanupDeadMercenaryRed()
+	coroutine.yield(WaitForSeconds(cleanupTime))
+	local curMercenary = List.popleft(mercenaryCleanQueueRed)
+	List.pushright(mercenarySpawnQueueRed, curMercenary)
+	curMercenary.Deactivate()
+	numMercenariesRed = numMercenariesRed - 1
+	if ((Player.team == Team.Red)) then
+		self:UpdateText()
+	end
+end
+
+function MercenaryReinforcements:CleanupDeadMercenaryStart(deadActor)
+	if (deadActor.team == Team.Blue) then
+		if (mercenaryDictBlue[deadActor] == true) then
+			mercenaryDictBlue[deadActor] = false
+			List.pushright(mercenaryCleanQueueBlue, deadActor)
+			self.script.StartCoroutine("CleanupDeadMercenaryBlue")
+		end
+	else
+		if (mercenaryDictRed[deadActor] == true) then
+			mercenaryDictRed[deadActor] = false
+			List.pushright(mercenaryCleanQueueRed, deadActor)
+			self.script.StartCoroutine("CleanupDeadMercenaryRed")
+		end
+	end
+end
+
+function MercenaryReinforcements:UpdateText()
+	-- exit if UI is disabled
+	if (isDisableMercenaryCounterUI) then
+		return
+	end
+
+	local killCount = "E:" .. tostring(teamBlueKillCounter) .. " R:" .. tostring(teamRedKillCounter)
+
+	local numMercenaries = ""
+	if (isEnableShowMercenaryCountUI) then
+		numMercenaries = "\n" .. tostring(numMercenariesBlue) .. "/" .. tostring(mercenaryMaxBlue) .. " " .. tostring(numMercenariesRed) .. "/" .. tostring(mercenaryMaxRed)
+	end
+	
+	cmcText.text = killCount .. numMercenaries
+end
+
+function MercenaryReinforcements:AddUICounter(spawnedActor)
+	coroutine.yield(WaitForSeconds(UIWaitTime))
+	cmcGO.SetActive(true)
+	self:UpdateText()
+end
+
+function MercenaryReinforcements:AddUICounterStart(spawnedActor)
+	if (spawnedActor == Player.actor) then
+		self.script.StartCoroutine("AddUICounter")
+	end
+end
+
+function MercenaryReinforcements:RemoveUICounter(deadActor)
+	if (deadActor == Player.actor) then
+		cmcGO.SetActive(false)
+	end
+end
+
+function MercenaryReinforcements:TeleportIdleMercenary()
+	while(true) do
+		coroutine.yield(WaitForSeconds(idleMercenaryTime))
+		for mercenary,value in pairs(mercenaryDictBlue) do
+			if ((value == true) and (mercenary ~= Player.actor)) then
+				if (mercenary.isInWater) then
+					local distance = Vector3.Distance(mercenaryIdlePosDict[mercenary], mercenary.position)
+					if (distance < mercenaryIdleMinDist) then
+						local randomFrontLineSpawn = ActorManager.RandomFrontlineSpawnPointForTeam(Team.Blue)
+						if (randomFrontLineSpawn ~= nil) then
+							mercenary.TeleportTo(randomFrontLineSpawn.spawnPosition, mercenary.rotation)
+						end
+					end
+					mercenaryIdlePosDict[mercenary] = mercenary.position
+				end
+			end
+			coroutine.yield()
+		end
+		for mercenary,value in pairs(mercenaryDictRed) do
+			if ((value == true) and (mercenary ~= Player.actor)) then
+				if (mercenary.isInWater) then
+					local distance = Vector3.Distance(mercenaryIdlePosDict[mercenary], mercenary.position)
+					if (distance < mercenaryIdleMinDist) then
+						local randomFrontLineSpawn = ActorManager.RandomFrontlineSpawnPointForTeam(Team.Red)
+						if (randomFrontLineSpawn ~= nil) then
+							mercenary.TeleportTo(randomFrontLineSpawn.spawnPosition, mercenary.rotation)
+						end
+					end
+					mercenaryIdlePosDict[mercenary] = mercenary.position
+				end
+			end
+			coroutine.yield()
+		end
+	end
+end
+
+function MercenaryReinforcements:AggressiveMercenarySquadCheckBlue()
+	-- wait a bit to override any new orders
+	coroutine.yield(WaitForSeconds(aggressiveCaptureTime))
+
+	-- loop mercenary dict
+	local mercenarySquads = {}
+	for mercenary,value in pairs(mercenaryDictBlue) do
+		if (value == true) then
+			mercenarySquads[mercenary.squad.leader] = mercenary.squad
+		end
+		coroutine.yield()
+	end
+
+	-- loop mercenary squads to issue new attack order
+	for mercLeader,mercSquad in pairs(mercenarySquads) do
+		self:EnableAggressiveSquad(mercSquad, Team.Blue, Team.Red)
+		coroutine.yield()
+	end
+end
+
+function MercenaryReinforcements:AggressiveMercenarySquadCheckRed()
+	-- wait a bit to override any new orders
+	coroutine.yield(WaitForSeconds(aggressiveCaptureTime))
+
+	-- loop mercenary dict
+	local mercenarySquads = {}
+	for mercenary,value in pairs(mercenaryDictRed) do
+		if (value == true) then
+			mercenarySquads[mercenary.squad.leader] = mercenary.squad
+		end
+		coroutine.yield()
+	end
+
+	-- loop mercenary squads to issue new attack order
+	for mercLeader,mercSquad in pairs(mercenarySquads) do
+		self:EnableAggressiveSquad(mercSquad, Team.Red, Team.Blue)
+		coroutine.yield()
+	end
+end
+
+function MercenaryReinforcements:UpdateFrontLinesBlue()
+	for frontline,value in pairs(frontlineDictBlue) do
+		if (value == true) then
+			local isAFrontline = false
+			for j,neighour in ipairs(frontline.neighoursOutgoing) do
+				if (neighour.owner ~= Team.Blue) then
+					isAFrontline = true
+					break
+				end
+				coroutine.yield()
+			end
+			if (isAFrontline) then
+				frontlineDictBlue[frontline] = true
+			else
+				frontlineDictBlue[frontline] = false
+			end
+		end
+		coroutine.yield()
+	end
+end
+
+function MercenaryReinforcements:UpdateFrontLinesRed()
+	for frontline,value in pairs(frontlineDictRed) do
+		if (value == true) then
+			local isAFrontline = false
+			for j,neighour in ipairs(frontline.neighoursOutgoing) do
+				if (neighour.owner ~= Team.Red) then
+					isAFrontline = true
+					break
+				end
+				coroutine.yield()
+			end
+			if (isAFrontline) then
+				frontlineDictRed[frontline] = true
+			else
+				frontlineDictRed[frontline] = false
+			end
+		end
+		coroutine.yield()
+	end
+end
+
+function MercenaryReinforcements:UpdateFrontLinesStart(capturePoint, newOwner)
+	-- exit if flags are being resetted on level load / restart
+	if (Time.timeSinceLevelLoad < 1) then
+		return
+	end
+
+	-- add capture point to corresponding frontline dict
+	if (newOwner == Team.Blue) then
+		frontlineDictBlue[capturePoint] = true
+	else
+		frontlineDictRed[capturePoint] = true
+	end
+
+	-- update blue frontlines
+	self.script.StartCoroutine("UpdateFrontLinesBlue")
+
+	-- update red frontlines
+	self.script.StartCoroutine("UpdateFrontLinesRed")
+
+	-- update aggressive blue squads
+	self.script.StartCoroutine("AggressiveMercenarySquadCheckBlue")
+
+	-- update aggressive red squads
+	self.script.StartCoroutine("AggressiveMercenarySquadCheckRed")
+end
+
+function MercenaryReinforcements:InitialFrontLinesUpdate(spawnedActor)
+	-- update blue frontlines
+	self.script.StartCoroutine("UpdateFrontLinesBlue")
+
+	-- update red frontlines
+	self.script.StartCoroutine("UpdateFrontLinesRed")
+
+	-- remove from calling again
+	GameEvents.onActorSpawn.RemoveListener(self, "InitialFrontLinesUpdate")
+end
+
+function MercenaryReinforcements:setConfigurationVariables()
+	percentTeamKillRequirement = self.script.mutator.GetConfigurationInt("percentTeamKillRequirement")
+	percentTeamKillReward = self.script.mutator.GetConfigurationInt("percentTeamKillReward")
+	percentMercenaryMaxBlue = self.script.mutator.GetConfigurationInt("percentMercenaryMaxBlue")
+	percentMercenaryMaxRed = self.script.mutator.GetConfigurationInt("percentMercenaryMaxRed")
+	percentLosingTeamRollback = self.script.mutator.GetConfigurationInt("percentLosingTeamRollback")
+	percentEnemyHandicapRequirement = self.script.mutator.GetConfigurationInt("percentEnemyHandicapRequirement")
+	airDropHeight = self.script.mutator.GetConfigurationInt("airDropHeight")
+	reinforcementAnnouncementTime = self.script.mutator.GetConfigurationInt("reinforcementAnnouncementTime")
+
+	isDisableMercenaryCounterUI = self.script.mutator.GetConfigurationBool("isDisableMercenaryCounterUI")
+	isDisableAggressiveMercenarySquads = self.script.mutator.GetConfigurationBool("isDisableAggressiveMercenarySquads")
+	isEnableDebugMessage = self.script.mutator.GetConfigurationBool("isEnableDebugMessage")
+	isEnableShowMercenaryCountUI = self.script.mutator.GetConfigurationBool("isEnableShowMercenaryCountUI")
+	isDisableReinforcementAnnouncement = self.script.mutator.GetConfigurationBool("isDisableReinforcementAnnouncement")
+	isOutOfBoundMerc = self.script.mutator.GetConfigurationBool("isOutOfBoundMerc")
+
+	local spawnMethodChoice = self.script.mutator.GetConfigurationDropdown("spawnMethodChoice")
+	if (spawnMethodChoice == 0) then
+		spawnMethod = SpawnMethod.DISTRIBUTED
+	else
+		spawnMethod = SpawnMethod.GROUP
+	end
+
+	local squadFormationChoice = self.script.mutator.GetConfigurationDropdown("squadFormationChoice")
+	if (squadFormationChoice == 0) then
+		squadFormation = SquadFormation.VEE
+	else
+		squadFormation = SquadFormation.DIAMOND
+	end
+end
+
+function MercenaryReinforcements:calculateConfigurationVariables()
+	-- get number of actors
+	local numOfActors = #ActorManager.actors
+
+	-- check if player is a spectator, reduce count by one
+	if (Player.isSpectator) then
+		numOfActors = numOfActors - 1
+	end
+
+	-- kill requirement calculations
+	if (percentTeamKillRequirement < 0) then
+		percentTeamKillRequirement = 0
+	end
+	teamKillRequirementBlue = math.ceil(numOfActors * math.abs(percentTeamKillRequirement / 100))
+	teamKillRequirementRed = math.ceil(numOfActors * math.abs(percentTeamKillRequirement / 100))
+
+	-- kill reward calculations
+	if (percentTeamKillReward < 0) then
+		percentTeamKillReward = 0
+	end
+	teamKillReward = math.ceil(numOfActors * math.abs(percentTeamKillReward / 100))
+
+	-- maximum actors on team calculations
+	if (percentMercenaryMaxBlue < 0) then
+		percentMercenaryMaxBlue = 0
+	end
+	if (percentMercenaryMaxRed < 0) then
+		percentMercenaryMaxRed = 0
+	end
+	mercenaryMaxBlue = math.ceil(numOfActors * math.abs(percentMercenaryMaxBlue / 100))
+	mercenaryMaxRed = math.ceil(numOfActors * math.abs(percentMercenaryMaxRed / 100))
+
+	-- opposing player's team handicap calculation
+	if (Player.team == Team.Blue) then
+		teamKillRequirementRed = math.ceil(teamKillRequirementRed - (teamKillRequirementRed * (percentEnemyHandicapRequirement / 100)))
+		if (teamKillRequirementRed < 0) then
+			teamKillRequirementRed = 0
+		end
+	elseif (Player.team == Team.Red) then
+		teamKillRequirementBlue = math.ceil(teamKillRequirementBlue - (teamKillRequirementBlue * (percentEnemyHandicapRequirement / 100)))
+		if (teamKillRequirementBlue < 0) then
+			teamKillRequirementBlue = 0
+		end
+	end
+
+	-- rollback calculation
+	if (percentLosingTeamRollback < 0) then
+		percentLosingTeamRollback = 0
+	end
+	losingTeamRollbackBlue = math.ceil(teamKillRequirementBlue * math.abs(percentLosingTeamRollback / 100))
+	losingTeamRollbackRed = math.ceil(teamKillRequirementRed * math.abs(percentLosingTeamRollback / 100))
+
+	-- set initial kill counter for teams
+	teamBlueKillCounter = teamKillRequirementBlue
+	teamRedKillCounter = teamKillRequirementRed
+
+	-- print values if debug is on
+	if (isEnableDebugMessage) then
+		print("--------------------------------------------------")
+		print("Team kill requirement Eagle: " .. tostring(teamKillRequirementBlue))
+		print("Team kill requirement Raven: " .. tostring(teamKillRequirementRed))
+		print("Number of mercenaries reward: " .. tostring(teamKillReward))
+		print("Mercenary max Eagle: " .. tostring(mercenaryMaxBlue))
+		print("Mercenary max Raven: " .. tostring(mercenaryMaxRed))
+		print("Losing team rollback Eagle: " .. tostring(losingTeamRollbackBlue))
+		print("Losing team rollback Raven: " .. tostring(losingTeamRollbackRed))
+	end
+end
+
+function MercenaryReinforcements:Start()
+	-- reset values
+	mercenaryDictBlue = {}
+	mercenaryDictRed = {}
+	mercenarySpawnQueueBlue = List.new()
+	mercenarySpawnQueueRed = List.new()
+	mercenaryCleanQueueBlue = List.new()
+	mercenaryCleanQueueRed = List.new()
+	mercenaryIdlePosDict = {}
+	teamBlueKillCounter = 0
+	teamRedKillCounter = 0
+	numMercenariesBlue = 0
+	numMercenariesRed = 0
+	isUiToggleEnable = true
+	frontlineDictBlue = {}
+	frontlineDictRed = {}
+
+	--
+	-- get gameobjects
+	--
+	-- skin gameobjects
+	mercenarySkinBlue = self.targets.mercenarySkinBlue
+	mercenarySkinRed = self.targets.mercenarySkinRed
+	-- canvas mercenary count gameobject
+	canvasMercenaryCount = self.targets.canvasMercenaryCount
+	if not (isDisableMercenaryCounterUI) then
+		cmcGO = GameObject.Instantiate(canvasMercenaryCount)
+		cmcGO.SetActive(false)
+		cmcText = cmcGO.transform.GetChild(0).GetChild(0).GetChild(0).gameObject.GetComponent(Text)
+	end
+	-- canvas reinforcement announcement gameobject
+	canvasReinforcementAnnouncement = self.targets.canvasReinforcementAnnouncement
+	if not (isDisableReinforcementAnnouncement) then
+		craGO = GameObject.Instantiate(canvasReinforcementAnnouncement)
+		craGO.SetActive(false)
+		craText = craGO.transform.GetChild(0).GetChild(0).GetChild(0).gameObject.GetComponent(Text)
+	end
+
+	-- load user's settings
+	self:setConfigurationVariables()
+
+	-- calculate based on total number of units
+	self:calculateConfigurationVariables()
+
+	--
+	-- GameEvents
+	--
+	GameEvents.onActorDied.AddListener(self, "CheckKillProgress")
+	GameEvents.onActorDied.AddListener(self, "CleanupDeadMercenaryStart")
+	if not (isDisableMercenaryCounterUI) then
+		GameEvents.onActorSpawn.AddListener(self, "AddUICounterStart")
+		GameEvents.onActorDied.AddListener(self, "RemoveUICounter")
+	end
+	GameEvents.onActorSpawn.AddListener(self, "InitialFrontLinesUpdate")
+	GameEvents.onCapturePointCaptured.AddListener(self, "UpdateFrontLinesStart")
+
+	--
+	-- Coroutines
+	--
+	if (isOutOfBoundMerc) then
+		self.script.StartCoroutine("TeleportIdleMercenary")
+	end
+end
+
+function MercenaryReinforcements:Update()
+	if (Input.GetKeyDown(KeyCode.End)) then
+		isUiToggleEnable = not isUiToggleEnable
+		if (isUiToggleEnable) then
+			self.script.StartCoroutine("AddUICounter")
+			craGO.SetActive(false)
+		else
+			cmcGO.SetActive(false)
+			craGO.SetActive(false)
+		end
+	end
+end
