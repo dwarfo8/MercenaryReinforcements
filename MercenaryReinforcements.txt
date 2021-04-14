@@ -42,6 +42,10 @@ local frontlineDictRed = {}
 
 local aggressiveCaptureTime = 5
 
+local initialMercenariesTriggeredBlue = false
+local initialMercenariesTriggeredRed = false
+local initialMercenaryCount = 0
+
 -- prevents error message with ActorManager.CreateAIActor when run too fast
 local mercSpawnBufferTime = 0.02
 
@@ -65,6 +69,9 @@ local losingTeamRollbackRed = 0
 
 local percentEnemyHandicapRequirement = 10
 
+local percentMercenaryInitial = 40
+local initialMercenarySpawntime = 10
+
 -- boolean options
 local isDisableMercenaryCounterUI = false
 local isDisableAggressiveMercenarySquads = false
@@ -72,6 +79,8 @@ local isEnableDebugMessage = false
 local isEnableShowMercenaryCountUI = false
 local isDisableReinforcementAnnouncement = false
 local isOutOfBoundMerc = false
+local isDisableSkin = false
+local isDisableInitialMercenaries = false
 
 SpawnMethod = {
 	["DISTRIBUTED"] = 1,
@@ -125,15 +134,18 @@ function MercenaryReinforcements:CreateMercenaryBlue()
 	local newMercenary = ActorManager.CreateAIActor(Team.Blue)
 	newMercenary.name = "[Merc] " .. newMercenary.name
 
-	-- set skin
-	local characterModelMesh = mercenarySkinBlue.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMesh
-	local characterModelMaterial = mercenarySkinBlue.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMaterials
-	local characterMeshSkin = MeshSkin(characterModelMesh, characterModelMaterial, -1)
+	-- check if skin is disabled
+	if not (isDisableSkin) then
+		-- set skin
+		local characterModelMesh = mercenarySkinBlue.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMesh
+		local characterModelMaterial = mercenarySkinBlue.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMaterials
+		local characterMeshSkin = MeshSkin(characterModelMesh, characterModelMaterial, -1)
 
-	-- assign mercenary skin
-	local curMercenarySkin = ActorSkin()
-	curMercenarySkin.characterSkin = characterMeshSkin
-	newMercenary.SetSkin(curMercenarySkin)
+		-- assign mercenary skin
+		local curMercenarySkin = ActorSkin()
+		curMercenarySkin.characterSkin = characterMeshSkin
+		newMercenary.SetSkin(curMercenarySkin)
+	end
 
 	-- update information
 	mercenaryDictBlue[newMercenary] = false
@@ -146,15 +158,18 @@ function MercenaryReinforcements:CreateMercenaryRed()
 	local newMercenary = ActorManager.CreateAIActor(Team.Red)
 	newMercenary.name = "[Merc] " .. newMercenary.name
 
-	-- set skin
-	local characterModelMesh = mercenarySkinRed.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMesh
-	local characterModelMaterial = mercenarySkinRed.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMaterials
-	local characterMeshSkin = MeshSkin(characterModelMesh, characterModelMaterial, -1)
+	-- check if skin is disabled
+	if not (isDisableSkin) then
+		-- set skin
+		local characterModelMesh = mercenarySkinRed.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMesh
+		local characterModelMaterial = mercenarySkinRed.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMaterials
+		local characterMeshSkin = MeshSkin(characterModelMesh, characterModelMaterial, -1)
 
-	-- assign mercenary skin
-	local curMercenarySkin = ActorSkin()
-	curMercenarySkin.characterSkin = characterMeshSkin
-	newMercenary.SetSkin(curMercenarySkin)
+		-- assign mercenary skin
+		local curMercenarySkin = ActorSkin()
+		curMercenarySkin.characterSkin = characterMeshSkin
+		newMercenary.SetSkin(curMercenarySkin)
+	end
 
 	-- update information
 	mercenaryDictRed[newMercenary] = false
@@ -293,6 +308,15 @@ function MercenaryReinforcements:ShowReinforcementAnnouncementRed()
 	end
 end
 
+function MercenaryReinforcements:ShowReinforcementAnnouncementInitial()
+	if (isUiToggleEnable) then
+		craGO.SetActive(true)
+		craText.text = "REINFORCEMENTS HAVE ARRIVED"
+		coroutine.yield(WaitForSeconds(reinforcementAnnouncementTime))
+		craGO.SetActive(false)
+	end
+end
+
 function MercenaryReinforcements:SpawnMercenaryBlue()
 	-- get list of squads
 	local allySquads = {}
@@ -307,8 +331,15 @@ function MercenaryReinforcements:SpawnMercenaryBlue()
 		curSquadIndex = math.random(1,#allySquads)
 	end
 
+	-- special case for initial mercenaries
+	local amountToSpawn = teamKillReward
+	if not (initialMercenariesTriggeredBlue) then
+		amountToSpawn = initialMercenaryCount
+		initialMercenariesTriggeredBlue = true
+	end
+
 	-- spawn mercenaries
-	for i=1,teamKillReward,1 do
+	for i=1,amountToSpawn,1 do
 		-- exit if mercenary count reach max limit
 		if (numMercenariesBlue >= mercenaryMaxBlue) then
 			break
@@ -390,8 +421,15 @@ function MercenaryReinforcements:SpawnMercenaryRed()
 		curSquadIndex = math.random(1,#allySquads)
 	end
 
+	-- special case for initial mercenaries
+	local amountToSpawn = teamKillReward
+	if not (initialMercenariesTriggeredRed) then
+		amountToSpawn = initialMercenaryCount
+		initialMercenariesTriggeredRed = true
+	end
+
 	-- spawn mercenaries
-	for i=1,teamKillReward,1 do
+	for i=1,amountToSpawn,1 do
 		-- exit if mercenary count reach max limit
 		if (numMercenariesRed >= mercenaryMaxRed) then
 			break
@@ -686,6 +724,29 @@ function MercenaryReinforcements:InitialFrontLinesUpdate(spawnedActor)
 	GameEvents.onActorSpawn.RemoveListener(self, "InitialFrontLinesUpdate")
 end
 
+function MercenaryReinforcements:SpawnInitialMercenaries()
+	-- wait a bit before mercenaries spawn in
+	coroutine.yield(WaitForSeconds(initialMercenarySpawntime))
+
+	-- trigger the first initial wave
+	self.script.StartCoroutine("SpawnMercenaryBlue")
+	self.script.StartCoroutine("SpawnMercenaryRed")
+
+	-- show announcement text
+	self.script.StartCoroutine("ShowReinforcementAnnouncementInitial")
+end
+
+function MercenaryReinforcements:SpawnInitialRedMercenaries()
+end
+
+function MercenaryReinforcements:SpawnInitialMercenariesStart(spawnedActor)
+	-- spawn initial mercenaries
+	self.script.StartCoroutine("SpawnInitialMercenaries")
+
+	-- remove from calling again
+	GameEvents.onActorSpawn.RemoveListener(self, "SpawnInitialMercenariesStart")
+end
+
 function MercenaryReinforcements:setConfigurationVariables()
 	percentTeamKillRequirement = self.script.mutator.GetConfigurationInt("percentTeamKillRequirement")
 	percentTeamKillReward = self.script.mutator.GetConfigurationInt("percentTeamKillReward")
@@ -702,6 +763,10 @@ function MercenaryReinforcements:setConfigurationVariables()
 	isEnableShowMercenaryCountUI = self.script.mutator.GetConfigurationBool("isEnableShowMercenaryCountUI")
 	isDisableReinforcementAnnouncement = self.script.mutator.GetConfigurationBool("isDisableReinforcementAnnouncement")
 	isOutOfBoundMerc = self.script.mutator.GetConfigurationBool("isOutOfBoundMerc")
+	isDisableSkin = self.script.mutator.GetConfigurationBool("isDisableSkin")
+	isDisableInitialMercenaries = self.script.mutator.GetConfigurationBool("isDisableInitialMercenaries")
+	percentMercenaryInitial = self.script.mutator.GetConfigurationInt("percentMercenaryInitial")
+	initialMercenarySpawntime = self.script.mutator.GetConfigurationInt("initialMercenarySpawntime")
 
 	local spawnMethodChoice = self.script.mutator.GetConfigurationDropdown("spawnMethodChoice")
 	if (spawnMethodChoice == 0) then
@@ -739,6 +804,17 @@ function MercenaryReinforcements:calculateConfigurationVariables()
 		percentTeamKillReward = 0
 	end
 	teamKillReward = math.ceil(numOfActors * math.abs(percentTeamKillReward / 100))
+
+	-- initial mercenary count calculations
+	if (percentMercenaryInitial < 0) then
+		percentMercenaryInitial = 0
+	end
+	initialMercenaryCount = math.ceil(numOfActors * math.abs(percentMercenaryInitial / 100))
+
+	-- initial mercenary spawn time must be equal or greater than 5 to avoid errors
+	if (initialMercenarySpawntime < 5) then
+		initialMercenarySpawntime = 5
+	end
 
 	-- maximum actors on team calculations
 	if (percentMercenaryMaxBlue < 0) then
@@ -780,6 +856,7 @@ function MercenaryReinforcements:calculateConfigurationVariables()
 		print("Team kill requirement Eagle: " .. tostring(teamKillRequirementBlue))
 		print("Team kill requirement Raven: " .. tostring(teamKillRequirementRed))
 		print("Number of mercenaries reward: " .. tostring(teamKillReward))
+		print("Number of mercenaries initial: " .. tostring(initialMercenaryCount))
 		print("Mercenary max Eagle: " .. tostring(mercenaryMaxBlue))
 		print("Mercenary max Raven: " .. tostring(mercenaryMaxRed))
 		print("Losing team rollback Eagle: " .. tostring(losingTeamRollbackBlue))
@@ -803,6 +880,9 @@ function MercenaryReinforcements:Start()
 	isUiToggleEnable = true
 	frontlineDictBlue = {}
 	frontlineDictRed = {}
+	initialMercenariesTriggeredBlue = false
+	initialMercenariesTriggeredRed = false
+	initialMercenaryCount = 0
 
 	--
 	-- get gameobjects
@@ -842,6 +922,9 @@ function MercenaryReinforcements:Start()
 	end
 	GameEvents.onActorSpawn.AddListener(self, "InitialFrontLinesUpdate")
 	GameEvents.onCapturePointCaptured.AddListener(self, "UpdateFrontLinesStart")
+	if not (isDisableInitialMercenaries) then
+		GameEvents.onActorSpawn.AddListener(self, "SpawnInitialMercenariesStart")
+	end
 
 	--
 	-- Coroutines
