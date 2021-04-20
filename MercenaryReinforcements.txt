@@ -63,14 +63,14 @@ local mercenaryMaxBlue = 0
 local percentMercenaryMaxRed = 100
 local mercenaryMaxRed = 0
 
-local percentLosingTeamRollback = 80
+local percentLosingTeamRollbackAdd = 20
 local losingTeamRollbackBlue = 0
 local losingTeamRollbackRed = 0
 
-local percentEnemyHandicapRequirement = 10
+local percentEnemyHandicapRequirement = 0
 
 local percentMercenaryInitial = 40
-local initialMercenarySpawntime = 10
+local initialMercenarySpawntime = 5
 
 -- boolean options
 local isDisableMercenaryCounterUI = false
@@ -253,12 +253,16 @@ function MercenaryReinforcements:CheckKillProgress(deadActor, killer)
 
 		-- rollback losing team if less than rollback value
 		if (killer.team == Team.Blue) then
-			if (teamRedKillCounter < losingTeamRollbackRed) then
-				teamRedKillCounter = losingTeamRollbackRed
+			-- add rollback value but do not exceed requirement
+			teamRedKillCounter = teamRedKillCounter + losingTeamRollbackRed
+			if (teamRedKillCounter > teamKillRequirementRed) then
+				teamRedKillCounter = teamKillRequirementRed
 			end
 		else
-			if (teamBlueKillCounter < losingTeamRollbackBlue) then
-				teamBlueKillCounter = losingTeamRollbackBlue
+			-- add rollback value but do not exceed requirement
+			teamBlueKillCounter = teamBlueKillCounter + losingTeamRollbackBlue
+			if (teamBlueKillCounter > teamKillRequirementBlue) then
+				teamBlueKillCounter = teamKillRequirementBlue
 			end
 		end
 
@@ -752,7 +756,7 @@ function MercenaryReinforcements:setConfigurationVariables()
 	percentTeamKillReward = self.script.mutator.GetConfigurationInt("percentTeamKillReward")
 	percentMercenaryMaxBlue = self.script.mutator.GetConfigurationInt("percentMercenaryMaxBlue")
 	percentMercenaryMaxRed = self.script.mutator.GetConfigurationInt("percentMercenaryMaxRed")
-	percentLosingTeamRollback = self.script.mutator.GetConfigurationInt("percentLosingTeamRollback")
+	percentLosingTeamRollbackAdd = self.script.mutator.GetConfigurationInt("percentLosingTeamRollbackAdd")
 	percentEnemyHandicapRequirement = self.script.mutator.GetConfigurationInt("percentEnemyHandicapRequirement")
 	airDropHeight = self.script.mutator.GetConfigurationInt("airDropHeight")
 	reinforcementAnnouncementTime = self.script.mutator.GetConfigurationInt("reinforcementAnnouncementTime")
@@ -840,11 +844,11 @@ function MercenaryReinforcements:calculateConfigurationVariables()
 	end
 
 	-- rollback calculation
-	if (percentLosingTeamRollback < 0) then
-		percentLosingTeamRollback = 0
+	if (percentLosingTeamRollbackAdd < 0) then
+		percentLosingTeamRollbackAdd = 0
 	end
-	losingTeamRollbackBlue = math.ceil(teamKillRequirementBlue * math.abs(percentLosingTeamRollback / 100))
-	losingTeamRollbackRed = math.ceil(teamKillRequirementRed * math.abs(percentLosingTeamRollback / 100))
+	losingTeamRollbackBlue = math.ceil(teamKillRequirementBlue * math.abs(percentLosingTeamRollbackAdd / 100))
+	losingTeamRollbackRed = math.ceil(teamKillRequirementRed * math.abs(percentLosingTeamRollbackAdd / 100))
 
 	-- set initial kill counter for teams
 	teamBlueKillCounter = teamKillRequirementBlue
@@ -859,8 +863,8 @@ function MercenaryReinforcements:calculateConfigurationVariables()
 		print("Number of mercenaries initial: " .. tostring(initialMercenaryCount))
 		print("Mercenary max Eagle: " .. tostring(mercenaryMaxBlue))
 		print("Mercenary max Raven: " .. tostring(mercenaryMaxRed))
-		print("Losing team rollback Eagle: " .. tostring(losingTeamRollbackBlue))
-		print("Losing team rollback Raven: " .. tostring(losingTeamRollbackRed))
+		print("Losing team rollback Eagle: +" .. tostring(losingTeamRollbackBlue))
+		print("Losing team rollback Raven: +" .. tostring(losingTeamRollbackRed))
 	end
 end
 
