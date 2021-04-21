@@ -16,6 +16,9 @@ local canvasMercenaryCount = nil
 local cmcGO = nil
 local cmcText = nil
 
+local mercenarySkinBlueVanilla = nil
+local mercenarySkinRedVanilla = nil
+
 local canvasReinforcementAnnouncement = nil
 local craGO = nil
 local craText = nil
@@ -79,7 +82,6 @@ local isEnableDebugMessage = false
 local isEnableShowMercenaryCountUI = false
 local isDisableReinforcementAnnouncement = false
 local isOutOfBoundMerc = false
-local isDisableSkin = false
 local isDisableInitialMercenaries = false
 
 SpawnMethod = {
@@ -93,6 +95,13 @@ SquadFormation = {
 	["DIAMOND"] = 2,
 }
 local squadFormation = SquadFormation.VEE
+
+SkinSelection = {
+	["DEFAULT"] = 1,
+	["VANILLA"] = 2,
+	["NONE"] = 3,
+}
+local skinSelection = SkinSelection.DEFAULT
 
 List = {}
 function List.new()
@@ -135,10 +144,14 @@ function MercenaryReinforcements:CreateMercenaryBlue()
 	newMercenary.name = "[Merc] " .. newMercenary.name
 
 	-- check if skin is disabled
-	if not (isDisableSkin) then
+	if (skinSelection ~= SkinSelection.NONE) then
 		-- set skin
-		local characterModelMesh = mercenarySkinBlue.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMesh
-		local characterModelMaterial = mercenarySkinBlue.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMaterials
+		local currentSkin = mercenarySkinBlue
+		if (skinSelection == SkinSelection.VANILLA) then
+			currentSkin = mercenarySkinBlueVanilla
+		end
+		local characterModelMesh = currentSkin.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMesh
+		local characterModelMaterial = currentSkin.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMaterials
 		local characterMeshSkin = MeshSkin(characterModelMesh, characterModelMaterial, -1)
 
 		-- assign mercenary skin
@@ -159,10 +172,14 @@ function MercenaryReinforcements:CreateMercenaryRed()
 	newMercenary.name = "[Merc] " .. newMercenary.name
 
 	-- check if skin is disabled
-	if not (isDisableSkin) then
+	if (skinSelection ~= SkinSelection.NONE) then
 		-- set skin
-		local characterModelMesh = mercenarySkinRed.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMesh
-		local characterModelMaterial = mercenarySkinRed.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMaterials
+		local currentSkin = mercenarySkinRed
+		if (skinSelection == SkinSelection.VANILLA) then
+			currentSkin = mercenarySkinRedVanilla
+		end
+		local characterModelMesh = currentSkin.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMesh
+		local characterModelMaterial = currentSkin.transform.GetChild(1).gameObject.GetComponent(SkinnedMeshRenderer).sharedMaterials
 		local characterMeshSkin = MeshSkin(characterModelMesh, characterModelMaterial, -1)
 
 		-- assign mercenary skin
@@ -767,7 +784,6 @@ function MercenaryReinforcements:setConfigurationVariables()
 	isEnableShowMercenaryCountUI = self.script.mutator.GetConfigurationBool("isEnableShowMercenaryCountUI")
 	isDisableReinforcementAnnouncement = self.script.mutator.GetConfigurationBool("isDisableReinforcementAnnouncement")
 	isOutOfBoundMerc = self.script.mutator.GetConfigurationBool("isOutOfBoundMerc")
-	isDisableSkin = self.script.mutator.GetConfigurationBool("isDisableSkin")
 	isDisableInitialMercenaries = self.script.mutator.GetConfigurationBool("isDisableInitialMercenaries")
 	percentMercenaryInitial = self.script.mutator.GetConfigurationInt("percentMercenaryInitial")
 	initialMercenarySpawntime = self.script.mutator.GetConfigurationInt("initialMercenarySpawntime")
@@ -784,6 +800,15 @@ function MercenaryReinforcements:setConfigurationVariables()
 		squadFormation = SquadFormation.VEE
 	else
 		squadFormation = SquadFormation.DIAMOND
+	end
+
+	local skinChoice = self.script.mutator.GetConfigurationDropdown("skinChoice")
+	if (skinChoice == 0) then
+		skinSelection = SkinSelection.DEFAULT
+	elseif (skinChoice == 1) then
+		skinSelection = SkinSelection.VANILLA
+	else
+		skinSelection = SkinSelection.NONE
 	end
 end
 
@@ -894,6 +919,8 @@ function MercenaryReinforcements:Start()
 	-- skin gameobjects
 	mercenarySkinBlue = self.targets.mercenarySkinBlue
 	mercenarySkinRed = self.targets.mercenarySkinRed
+	mercenarySkinBlueVanilla = self.targets.mercenarySkinBlueVanilla
+	mercenarySkinRedVanilla = self.targets.mercenarySkinRedVanilla
 	-- canvas mercenary count gameobject
 	canvasMercenaryCount = self.targets.canvasMercenaryCount
 	if not (isDisableMercenaryCounterUI) then
