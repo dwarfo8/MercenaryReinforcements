@@ -71,6 +71,8 @@ local isDisableInitialMercenaries = false
 local teamBlueTotal = 0
 local teamRedTotal = 0
 
+local attackTime = 1
+
 SpawnMethod = {
 	["DISTRIBUTED"] = 1,
 	["GROUP"] = 2,
@@ -276,15 +278,12 @@ end
 function MercenaryReinforcements:SpawnMercenaryBlue()
 	-- get list of squads
 	local allySquads = {}
-	local curSquadIndex = 1
+	allySquads = ActorManager.GetSquadsOnTeam(Team.Blue)
+	local curSquadIndex = math.random(1,#allySquads)
 
-	-- get squad for distributed -- squad looping
-	if (spawnMethod == SpawnMethod.DISTRIBUTED) then
-		allySquads = ActorManager.GetSquadsOnTeam(Team.Blue)
-	-- get random squad for single group
-	elseif (spawnMethod == SpawnMethod.GROUP) then
-		allySquads = ActorManager.GetSquadsOnTeam(Team.Blue)
-		curSquadIndex = math.random(1,#allySquads)
+	-- exit if no squads
+	if(#allySquads == 0) then
+		return
 	end
 
 	-- special case for initial mercenaries
@@ -355,15 +354,12 @@ end
 function MercenaryReinforcements:SpawnMercenaryRed()
 	-- get list of squads
 	local allySquads = {}
-	local curSquadIndex = 1
+	allySquads = ActorManager.GetSquadsOnTeam(Team.Red)
+	local curSquadIndex = math.random(1,#allySquads)
 
-	-- get squad for distributed -- squad looping
-	if (spawnMethod == SpawnMethod.DISTRIBUTED) then
-		allySquads = ActorManager.GetSquadsOnTeam(Team.Red)
-	-- get random squad for single group
-	elseif (spawnMethod == SpawnMethod.GROUP) then
-		allySquads = ActorManager.GetSquadsOnTeam(Team.Red)
-		curSquadIndex = math.random(1,#allySquads)
+	-- exit if no squads
+	if(#allySquads == 0) then
+		return
 	end
 
 	-- special case for initial mercenaries
@@ -563,6 +559,83 @@ function MercenaryReinforcements:CheckBothTeamsReady(spawnedActor)
 	end
 end
 
+function MercenaryReinforcements:Attack()
+	-- loop through blue team mercenaries
+	for mercenary,value in pairs(mercenaryDictBlue) do
+		if (value == true) then
+			-- exit if mercenary squad doesn't exist
+			if (mercenary.squad == nil) then
+				break
+			end
+
+			local allyTeam = Team.Blue
+			local enemyTeam = Team.Red
+
+			-- make mercenary squad attack
+			if ((mercenary.squad.order ~= nil) and (mercenary.squad.order.type ~= OrderType.Attack) and (mercenary.squad.leader ~= Player.actor)) then
+				-- find outgoing enemy/neutral connections from random ally frontline spawnpoint
+				local frontlineSpawnPointAlly = ActorManager.RandomFrontlineSpawnPointForTeam(allyTeam)
+				local neighoursOutgoing = frontlineSpawnPointAlly.neighoursOutgoing
+				local neighoursOutgoingAttackable = {}
+				for i,neighbour in pairs(neighoursOutgoing) do
+					if (neighbour.owner == enemyTeam or neighbour.owner == Team.Neutral) then
+						table.insert(neighoursOutgoingAttackable, neighbour)
+					end
+				end
+
+				-- choose random outgoing connection to attack
+				local index = math.random(1,#neighoursOutgoingAttackable)
+				local targetSpawnPoint = neighoursOutgoingAttackable[index]
+
+				local attackOrder = Order.Create(OrderType.Attack, frontlineSpawnPointAlly, targetSpawnPoint)
+				mercenary.squad.AssignOrder(attackOrder)
+			end
+		end
+		coroutine.yield()
+	end
+
+	-- loop through red team mercenaries
+	for mercenary,value in pairs(mercenaryDictRed) do
+		if (value == true) then
+			-- exit if mercenary squad doesn't exist
+			if (mercenary.squad == nil) then
+				break
+			end
+
+			local allyTeam = Team.Red
+			local enemyTeam = Team.Blue
+
+			-- make mercenary squad attack
+			if (mercenary.squad.order == nil and mercenary.squad.leader ~= Player.actor) then
+				-- find outgoing enemy/neutral connections from random ally frontline spawnpoint
+				local frontlineSpawnPointAlly = ActorManager.RandomFrontlineSpawnPointForTeam(allyTeam)
+				local neighoursOutgoing = frontlineSpawnPointAlly.neighoursOutgoing
+				local neighoursOutgoingAttackable = {}
+				for i,neighbour in pairs(neighoursOutgoing) do
+					if (neighbour.owner == enemyTeam or neighbour.owner == Team.Neutral) then
+						table.insert(neighoursOutgoingAttackable, neighbour)
+					end
+				end
+
+				-- choose random outgoing connection to attack
+				local index = math.random(1,#neighoursOutgoingAttackable)
+				local targetSpawnPoint = neighoursOutgoingAttackable[index]
+
+				local attackOrder = Order.Create(OrderType.Attack, frontlineSpawnPointAlly, targetSpawnPoint)
+				mercenary.squad.AssignOrder(attackOrder)
+			end
+		end
+		coroutine.yield()
+	end
+end
+
+function MercenaryReinforcements:AttackStart()
+	while (true) do
+		self:Attack()
+		coroutine.yield(WaitForSeconds(attackTime))
+	end
+end
+
 function MercenaryReinforcements:setConfigurationVariables()
 	teamKillRequirementBlue = self.script.mutator.GetConfigurationInt("teamKillRequirementBlue")
 	teamKillRewardBlue = self.script.mutator.GetConfigurationInt("teamKillRewardBlue")
@@ -691,6 +764,8 @@ function MercenaryReinforcements:Start()
 	if (isOutOfBoundMerc) then
 		self.script.StartCoroutine("TeleportIdleMercenary")
 	end
+	-- attack
+	self.script.StartCoroutine("AttackStart")
 end
 
 function MercenaryReinforcements:Update()
